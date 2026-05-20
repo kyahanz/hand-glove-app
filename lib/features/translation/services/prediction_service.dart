@@ -34,8 +34,9 @@ class PredictionResult {
 //    1. Terima 33 fitur raw dari BLE (tanpa timestamp)
 //    2. Ekstrak quaternion per jari → konversi ke Euler ZYX (derajat)
 //    3. Susun 24 fitur: [dip, pip, Q_z, Q_y, Q_x] per jari
-//    4. Feed langsung ke TFLite (tanpa scaler)
-//    5. Confidence threshold + debounce → output stabil
+//    4. StandardScaler: z = (x - mean) / scale
+//    5. Feed ke TFLite
+//    6. Confidence threshold + debounce → output stabil
 //
 //  Raw 33 fitur (setelah strip timestamp di BLEService):
 //    [0-3]   hand_w/x/y/z          ← tidak dipakai
@@ -79,6 +80,8 @@ class PredictionService {
 
   Interpreter? _interpreter;
   List<String> _labels = [];
+  List<double> _scalerMean  = [];
+  List<double> _scalerScale = [];
   bool _isLoaded = false;
 
   final List<String> _debounceBuffer = [];
@@ -99,6 +102,14 @@ class PredictionService {
       _labels = rawLabels.map((e) => e.toString().toUpperCase()).toList();
       _log('✅ Labels (${_labels.length}): $_labels');
 
+      // ── Load StandardScaler params ────────────────────────────────────────
+      _log('⏳ Loading scaler params...');
+      final scalerStr = await rootBundle.loadString('assets/scaler_params_standard.json');
+      final Map<String, dynamic> scalerJson = jsonDecode(scalerStr);
+      _scalerMean  = List<double>.from((scalerJson['mean']  as List).map((e) => (e as num).toDouble()));
+      _scalerScale = List<double>.from((scalerJson['scale'] as List).map((e) => (e as num).toDouble()));
+      _log('✅ Scaler loaded: mean[0]=${_scalerMean[0].toStringAsFixed(4)}, scale[0]=${_scalerScale[0].toStringAsFixed(4)}');
+
       // ── Load TFLite model ─────────────────────────────────────────────────
       _log('⏳ Loading model...');
       _interpreter = await Interpreter.fromAsset('assets/glove_model_robust.tflite');
@@ -109,12 +120,21 @@ class PredictionService {
       _log('   Input  shape : $inputShape');
       _log('   Output shape : $outputShape');
 
-      // Pastikan model menerima 24 fitur (bukan 33 format lama)
+      // Pastikan model menerima 24 fitur
       if (inputShape.length < 2 || inputShape[1] != kModelFeatureCount) {
         throw Exception(
           'Model input shape $inputShape tidak sesuai. '
           'Dibutuhkan [1, $kModelFeatureCount]. '
-          'Pastikan model dari Colab (24 fitur Euler) sudah di-copy ke assets/.',
+          'Pastikan model dari Colab (24 fitur Euler + StandardScaler) sudah di-copy ke assets/.',
+        );
+      }
+
+      // Pastikan scaler punya 24 nilai
+      if (_scalerMean.length != kModelFeatureCount || _scalerScale.length != kModelFeatureCount) {
+        throw Exception(
+          'Scaler params tidak valid. '
+          'mean=${_scalerMean.length}, scale=${_scalerScale.length}. '
+          'Dibutuhkan keduanya = $kModelFeatureCount.',
         );
       }
 
@@ -174,7 +194,16 @@ class PredictionService {
     ];
   }
 
-  // ── 4. PREDICT ────────────────────────────────────────────────────────────────
+  // ── 4. STANDARD SCALER: z = (x - mean) / scale ──────────────────────────────
+
+  List<double> _applyScaler(List<double> features) {
+    return List<double>.generate(features.length, (i) {
+      final scale = _scalerScale[i] == 0.0 ? 1.0 : _scalerScale[i]; // hindari div/0
+      return (features[i] - _scalerMean[i]) / scale;
+    });
+  }
+
+  // ── 5. PREDICT ────────────────────────────────────────────────────────────────
 
   PredictionResult predict(List<double> rawFeatures) {
     if (!_isLoaded || _interpreter == null) return PredictionResult.loading;
@@ -191,25 +220,28 @@ class PredictionService {
 
     try {
       // Step 1: Bangun 24 fitur dari 33 raw (Euler + PIP/DIP)
-      final features = _buildFeatures(rawFeatures);
-      if (features == null) return PredictionResult.empty;
+      final rawF = _buildFeatures(rawFeatures);
+      if (rawF == null) return PredictionResult.empty;
 
-      _log('📊 Features (24): ${features.map((e) => e.toStringAsFixed(2)).join(', ')}');
+      // Step 2: StandardScaler — z = (x - mean) / scale
+      final features = _applyScaler(rawF);
 
-      // Step 2: Inference — input [1,24], output [1,nLabels]
+      _log('📊 Features scaled (24): ${features.map((e) => e.toStringAsFixed(3)).join(', ')}');
+
+      // Step 3: Inference — input [1,24], output [1,nLabels]
       final input  = [features];
       final output = List.generate(1, (_) => List.filled(_labels.length, 0.0));
       _interpreter!.run(input, output);
 
       final scores = output[0];
 
-      // Step 3: Build allScores
+      // Step 4: Build allScores
       final allScores = <String, double>{
         for (int i = 0; i < scores.length; i++)
           (i < _labels.length ? _labels[i] : '$i'): scores[i],
       };
 
-      // Step 4: Argmax
+      // Step 5: Argmax
       int bestIdx = 0;
       double bestScore = scores[0];
       for (int i = 1; i < scores.length; i++) {
@@ -221,7 +253,7 @@ class PredictionService {
 
       _log('📈 Best → ${_labels[bestIdx]} (${(bestScore * 100).toStringAsFixed(1)}%)');
 
-      // Step 5: Confidence threshold
+      // Step 6: Confidence threshold
       if (bestScore < kConfidenceThreshold) {
         _log('⚠️ Confidence ${(bestScore * 100).toStringAsFixed(1)}%'
             ' < ${(kConfidenceThreshold * 100).toStringAsFixed(0)}% → detecting');
@@ -232,7 +264,7 @@ class PredictionService {
         );
       }
 
-      // Step 6: Debounce
+      // Step 7: Debounce
       final rawLabel    = bestIdx < _labels.length ? _labels[bestIdx] : '?';
       final stableLabel = _pushDebounce(rawLabel);
 
