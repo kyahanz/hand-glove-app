@@ -64,12 +64,11 @@ flutter:
   # the material Icons class.
   uses-material-design: true
 
-  # Assets untuk model Neural Network (MLP, 33-fitur, data-hardened)
+  # Assets untuk model Neural Network (24-fitur: Euler ZYX + PIP/DIP, tanpa scaler)
   assets:
     - assets/
     - assets/nn_labels.json
-    - assets/sibi_model_new.tflite
-    - assets/scaler_params_standard.json
+    - assets/glove_model_robust.tflite
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images
