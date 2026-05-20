@@ -36,22 +36,22 @@ class GestureController {
     if (rawData.length != PredictionService.kFeatureCount) {
       return ('', 0.0);
     }
-
     final result = _service.predict(rawData);
     return (result.label, result.confidence);
   }
 
   // ── Akses langsung ke PredictionService (untuk kalibrasi dari UI) ──────────
 
-  /// Update nilai min kalibrasi (untuk adaptasi per pengguna).
-  void calibrateMin(List<double> sensorData) =>
-      _service.calibrateMin(sensorData);
+  /// ✅ FIX: Update mean kalibrasi (StandardScaler — bukan MinMax lagi).
+  /// Panggil saat ingin adaptasi scaler ke pengguna baru.
+  void calibrateMean(List<double> sensorData) =>
+      _service.calibrateMean(sensorData);
 
-  /// Update nilai max kalibrasi (untuk adaptasi per pengguna).
-  void calibrateMax(List<double> sensorData) =>
-      _service.calibrateMax(sensorData);
+  /// ✅ FIX: Update scale/std kalibrasi (StandardScaler — bukan MinMax lagi).
+  void calibrateScale(List<double> sensorData) =>
+      _service.calibrateScale(sensorData);
 
-  /// Reset kalibrasi ke nilai default dari scaler JSON.
+  /// Reset kalibrasi ke nilai default dari scaler_params_standard.json.
   Future<void> resetCalibration() => _service.resetCalibration();
 
   /// Reset debounce buffer — panggil saat BLE disconnect atau gesture baru.

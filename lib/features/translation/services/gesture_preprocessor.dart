@@ -6,7 +6,7 @@ import 'dart:math';
 /// Kolom input (29):
 ///   [0-3]  Hand Quaternion (w,x,y,z)
 ///   [4]    Pinky Flex,  [5-8]  Pinky Q
-///   [9]    Ring Flex,   [10-13] Ring Q
+///   [9]    Ring Flex,   [10-13] Ring Q 
 ///   [14]   Middle Flex, [15-18] Middle Q
 ///   [19]   Index Flex,  [20-23] Index Q
 ///   [24]   Thumb Flex,  [25-28] Thumb Q
@@ -31,7 +31,7 @@ class GesturePreprocessor {
     [0.01856301, 0.03712602, 0.01856301, 1.0, -0.67274091, 0.1445352],
     [1.0, 2.0, 1.0, 1.0, -0.89765794, 0.5271869],
   ];
-  late List<List<List<double>>> _bqState; // [29][2][2]
+  late List<List<List<double>>> _bqState; // [29][2][2] 
 
   // ─── Sliding Window ─────────────────────────────────────────────────────
   final List<List<double>> _slidingBuffer = []; // max size = slidingWindowSize

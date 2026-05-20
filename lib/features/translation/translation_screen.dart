@@ -357,32 +357,36 @@ class TranslationScreen extends StatelessWidget {
             ),
             const SizedBox(height: 20),
 
-            // Tampilkan TS (Info saja)
-            if (provider.currentData.isNotEmpty)
-              Text("TS: ${provider.currentData[0].toInt()}", style: const TextStyle(fontSize: 10, color: Colors.white24)),
             const SizedBox(height: 10),
 
-            // Flex Sensors Section (Indeks: 5, 10, 15, 20, 25)
+            // Format 33 fitur (tanpa timestamp):
+            //   [0-3]   hand_w/x/y/z
+            //   [4-7]   pinky_mcp Q, [8-11] ring_mcp Q
+            //   [12-15] middle_mcp Q, [16-19] index_mcp Q, [20-23] thumb_mcp Q
+            //   [24] pinky_pip, [25] ring_pip, [26] middle_pip, [27] index_pip, [28] thumb_ip
+            //   [29] pinky_dip, [30] ring_dip, [31] middle_dip, [32] index_dip
+
+            // Sudut PIP/DIP per jari (indeks 24–28)
             _buildDataSection(
-              "SENSOR FLEX (mV)",
-              provider.currentData.length >= 26 
+              "SUDUT SENDI (derajat)",
+              provider.currentData.length >= 33
                 ? [
-                    provider.currentData[25], // Thumb
-                    provider.currentData[20], // Index
-                    provider.currentData[15], // Middle
-                    provider.currentData[10], // Ring
-                    provider.currentData[5],  // Pinky
+                    provider.currentData[28], // thumb_ip
+                    provider.currentData[27], // index_pip
+                    provider.currentData[26], // middle_pip
+                    provider.currentData[25], // ring_pip
+                    provider.currentData[24], // pinky_pip
                   ]
                 : [],
-              ["Jempol", "Telunjuk", "Tengah", "Manis", "Kelingking"],
+              ["Jempol (IP)", "Telunjuk", "Tengah", "Manis", "Kelingking"],
             ),
             const SizedBox(height: 15),
-            
-            // Quaternion Section
+
+            // Thumb MCP quaternion (indeks 20–23) — berubah saat jempol ditekuk
             _buildDataSection(
-              "QUATERNION (W,X,Y,Z)",
-              provider.currentData.length >= 5 
-                ? provider.currentData.sublist(1, 5) // Back Q
+              "THUMB MCP Q (W,X,Y,Z)",
+              provider.currentData.length >= 24
+                ? provider.currentData.sublist(20, 24)
                 : [],
               ["Q_W", "Q_X", "Q_Y", "Q_Z"],
             ),

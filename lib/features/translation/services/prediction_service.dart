@@ -84,7 +84,7 @@ class PredictionService {
 
   /// Threshold probabilitas minimum agar prediksi dianggap valid.
   /// Di bawah ini → kembalikan status "Mendeteksi..."
-  static const double kConfidenceThreshold = 0.85;
+  static const double kConfidenceThreshold = 0.65;
 
   /// Jumlah frame berturut-turut dengan huruf SAMA agar output dianggap stabil.
   /// Ini mencegah UI "flicker" akibat noise sensor.
@@ -99,10 +99,11 @@ class PredictionService {
   List<String> _labels = [];
   bool _isLoaded = false;
 
-  /// Nilai kalibrasi aktif — diinisialisasi dari scaler JSON,
-  /// bisa diubah dinamis via [calibrateMin] / [calibrateMax].
-  List<double> currentMin = [];
-  List<double> currentMax = [];
+  /// Parameter StandardScaler — diinisialisasi dari scaler JSON.
+  /// mean  : rata-rata tiap fitur dari dataset training
+  /// scale : standar deviasi tiap fitur dari dataset training
+  List<double> currentMean = [];
+  List<double> currentScale = [];
 
   // Debounce buffer: menyimpan N prediksi frame terakhir
   final List<String> _debounceBuffer = [];
@@ -123,9 +124,11 @@ class PredictionService {
   Future<void> init() async {
     try {
       // ── Load labels (a-z) ──────────────────────────────────────────────────
-      final labelsStr =
-          await rootBundle.loadString('assets/nn_labels.json');
-      final List<dynamic> rawLabels = jsonDecode(labelsStr);
+      final labelsStr = await rootBundle.loadString('assets/nn_labels.json');
+      final dynamic decoded = jsonDecode(labelsStr);
+      final List<dynamic> rawLabels = decoded is List
+          ? decoded
+          : (decoded as Map<String, dynamic>)['labels'] as List<dynamic>;
       _labels = rawLabels.map((e) => e.toString().toUpperCase()).toList();
       _log('✅ [PredictionService] Labels (${_labels.length}): $_labels');
 
@@ -136,7 +139,7 @@ class PredictionService {
       // ── Load TFLite interpreter ────────────────────────────────────────────
       _log('⏳ [PredictionService] Loading model...');
       _interpreter = await Interpreter.fromAsset(
-        'assets/glove_model_robust.tflite',
+        'assets/sibi_model_new.tflite',
       );
       _isLoaded = true;
 
@@ -150,68 +153,61 @@ class PredictionService {
   }
 
   Future<void> _loadScaler() async {
-    final scalerStr =
-        await rootBundle.loadString('assets/scaler_params_robust.json');
+    final scalerStr = await rootBundle.loadString(
+      'assets/scaler_params_standard.json',
+    );
     final Map<String, dynamic> scalerData = jsonDecode(scalerStr);
 
-    currentMin = (scalerData['min'] as List)
+    currentMean = (scalerData['mean'] as List)
         .map((e) => (e as num).toDouble())
         .toList();
-    currentMax = (scalerData['max'] as List)
+    currentScale = (scalerData['scale'] as List)
         .map((e) => (e as num).toDouble())
         .toList();
 
-    if (currentMin.length != kFeatureCount ||
-        currentMax.length != kFeatureCount) {
+    if (currentMean.length != kFeatureCount ||
+        currentScale.length != kFeatureCount) {
       throw Exception(
         'Scaler mismatch! Expected $kFeatureCount fitur, '
-        'got min=${currentMin.length} max=${currentMax.length}.',
+        'got mean=${currentMean.length} scale=${currentScale.length}.',
       );
     }
-    _log('✅ [PredictionService] Scaler: ${currentMin.length} fitur loaded.');
+    _log(
+      '✅ [PredictionService] StandardScaler: ${currentMean.length} fitur loaded.',
+    );
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
   //  2. STATE KALIBRASI DINAMIS
   // ─────────────────────────────────────────────────────────────────────────────
 
-  /// Update nilai minimum kalibrasi secara dinamis.
-  ///
-  /// Gunakan ini untuk menyesuaikan sarung tangan tiap pengguna:
-  ///
-  /// ```dart
-  /// // Contoh: ambil 30 sample saat tangan dalam posisi rileks
-  /// predictionService.calibrateMin(sensorSample30Values);
-  /// ```
-  ///
-  /// [sensorData] harus berisi tepat [kFeatureCount] (33) nilai.
-  void calibrateMin(List<double> sensorData) {
+  /// Update mean kalibrasi secara dinamis (opsional, advanced use).
+  void calibrateMean(List<double> sensorData) {
     if (sensorData.length != kFeatureCount) {
-      print('❌ [PredictionService] calibrateMin: panjang data harus $kFeatureCount '
-          '(dapat ${sensorData.length})');
+      print(
+        '❌ [PredictionService] calibrateMean: panjang data harus $kFeatureCount '
+        '(dapat ${sensorData.length})',
+      );
       return;
     }
-    currentMin = List.from(sensorData);
-    _log('🔄 [PredictionService] currentMin diperbarui.');
+    currentMean = List.from(sensorData);
+    _log('🔄 [PredictionService] currentMean diperbarui.');
   }
 
-  /// Update nilai maksimum kalibrasi secara dinamis.
-  ///
-  /// ```dart
-  /// // Contoh: ambil sample saat semua jari dalam posisi menekuk penuh
-  /// predictionService.calibrateMax(sensorSampleFullBend);
-  /// ```
-  void calibrateMax(List<double> sensorData) {
+  /// Update scale kalibrasi secara dinamis (opsional, advanced use).
+  void calibrateScale(List<double> sensorData) {
     if (sensorData.length != kFeatureCount) {
-      print('❌ [PredictionService] calibrateMax: panjang data harus $kFeatureCount '
-          '(dapat ${sensorData.length})');
+      print(
+        '❌ [PredictionService] calibrateScale: panjang data harus $kFeatureCount '
+        '(dapat ${sensorData.length})',
+      );
       return;
     }
-    currentMax = List.from(sensorData);
-    _log('🔄 [PredictionService] currentMax diperbarui.');
+    currentScale = List.from(sensorData);
+    _log('🔄 [PredictionService] currentScale diperbarui.');
   }
 
-  /// Reset kalibrasi ke nilai default dari scaler_params_robust.json.
+  /// Reset kalibrasi ke nilai default dari scaler_params_standard.json.
   Future<void> resetCalibration() async {
     await _loadScaler();
     _log('🔄 [PredictionService] Kalibrasi di-reset ke nilai default.');
@@ -221,37 +217,23 @@ class PredictionService {
   //  3. PREPROCESSING — MinMax Normalization
   // ─────────────────────────────────────────────────────────────────────────────
 
-  /// Normalisasi data sensor menggunakan rumus MinMax:
-  ///   `normalized = (raw - currentMin) / (currentMax - currentMin)`
+  /// Normalisasi data sensor menggunakan StandardScaler:
+  ///   `normalized = (raw - mean) / scale`
   ///
-  /// - Hasil di-clamp ke [0.0, 1.0].
-  /// - Jika `(currentMax - currentMin) == 0` (range nol), nilai jadi 0.0.
-  ///
-  /// Fungsi ini bisa dipanggil mandiri untuk keperluan debug:
-  /// ```dart
-  /// final normed = service.normalize(rawSensor33);
-  /// print(normed); // [0.12, 0.87, ...]
-  /// ```
+  /// - Konsisten dengan preprocessing saat training model.
+  /// - Tidak ada clamping karena StandardScaler tidak bounded.
   List<double> normalize(List<double> rawData) {
-    bool anyOutOfRange = false;
-
     final result = List<double>.generate(kFeatureCount, (i) {
-      final min = currentMin[i];
-      final max = currentMax[i];
-      final range = max - min;
-
+      final scale = currentScale[i];
       // Guard: pembagian dengan nol
-      if (range == 0.0) return 0.0;
-
-      final norm = (rawData[i] - min) / range;
-      if (norm < 0.0 || norm > 1.0) anyOutOfRange = true;
-      return norm.clamp(0.0, 1.0);
+      if (scale == 0.0) return 0.0;
+      return (rawData[i] - currentMean[i]) / scale;
     });
 
-    if (anyOutOfRange) {
-      _log('⚠️  [PredictionService] Beberapa nilai sensor di luar range '
-          'training (calibration drift?). Pertimbangkan panggil calibrateMin/Max().');
-    }
+    _log(
+      '📊 [PredictionService] StandardScaled: '
+      '${result.map((e) => e.toStringAsFixed(3)).take(5).join(', ')}...',
+    );
     return result;
   }
 
@@ -274,8 +256,10 @@ class PredictionService {
 
     // ── Guard: jumlah fitur ──────────────────────────────────────────────────
     if (rawFeatures.length < kFeatureCount) {
-      _log('⚠️  [PredictionService] Fitur kurang: '
-          '${rawFeatures.length}/$kFeatureCount');
+      _log(
+        '⚠️  [PredictionService] Fitur kurang: '
+        '${rawFeatures.length}/$kFeatureCount',
+      );
       return PredictionResult.empty;
     }
 
@@ -291,15 +275,16 @@ class PredictionService {
 
       // Step 2: Normalisasi MinMax
       final normalized = normalize(features);
-      _log('📊 [PredictionService] Normalized: '
-          '${normalized.map((e) => e.toStringAsFixed(2)).join(', ')}');
+      _log(
+        '📊 [PredictionService] Normalized: '
+        '${normalized.map((e) => e.toStringAsFixed(2)).join(', ')}',
+      );
 
       // Step 3: Inference TFLite
       //   Input tensor  : shape [1, 33]
       //   Output tensor : shape [1, nLabels]
       final input = [normalized];
-      final output =
-          List.generate(1, (_) => List.filled(_labels.length, 0.0));
+      final output = List.generate(1, (_) => List.filled(_labels.length, 0.0));
       _interpreter!.run(input, output);
 
       final scores = output[0]; // List<double> panjang nLabels
@@ -320,13 +305,17 @@ class PredictionService {
         }
       }
 
-      _log('📈 [PredictionService] Best → '
-          '${_labels[bestIdx]} (${(bestScore * 100).toStringAsFixed(1)}%)');
+      _log(
+        '📈 [PredictionService] Best → '
+        '${_labels[bestIdx]} (${(bestScore * 100).toStringAsFixed(1)}%)',
+      );
 
       // Step 6: Confidence threshold
       if (bestScore < kConfidenceThreshold) {
-        _log('⚠️  [PredictionService] Confidence ${(bestScore * 100).toStringAsFixed(1)}% '
-            '< ${(kConfidenceThreshold * 100).toStringAsFixed(0)}% → kDetecting');
+        _log(
+          '⚠️  [PredictionService] Confidence ${(bestScore * 100).toStringAsFixed(1)}% '
+          '< ${(kConfidenceThreshold * 100).toStringAsFixed(0)}% → kDetecting',
+        );
         _pushDebounce(''); // Frame tidak valid → reset streak
         return PredictionResult(
           label: '',
@@ -337,12 +326,11 @@ class PredictionService {
       }
 
       // Step 7: Debounce / Stability check
-      final rawLabel =
-          bestIdx < _labels.length ? _labels[bestIdx] : '?';
+      final rawLabel = bestIdx < _labels.length ? _labels[bestIdx] : '?';
       final stableLabel = _pushDebounce(rawLabel);
 
       return PredictionResult(
-        label: stableLabel,           // Kosong jika belum stabil
+        label: stableLabel, // Kosong jika belum stabil
         confidence: bestScore,
         allScores: allScores,
         displayStatus: stableLabel.isNotEmpty ? stableLabel : kDetecting,
@@ -370,7 +358,8 @@ class PredictionService {
     }
 
     // Semua elemen buffer harus sama DAN bukan string kosong
-    final isStable = _debounceBuffer.length == kDebounceFrames &&
+    final isStable =
+        _debounceBuffer.length == kDebounceFrames &&
         rawLabel.isNotEmpty &&
         _debounceBuffer.every((l) => l == rawLabel);
 
